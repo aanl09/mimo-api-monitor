@@ -1,7 +1,7 @@
 {
   "key_status": "ACTIVE",
   "completion_ok": true,
-  "latency_ms": 2278,
+  "latency_ms": 1307,
   "model_count": 8,
   "models": [
     "mimo-v2-omni",
@@ -13,9 +13,9 @@
     "mimo-v2.5-tts-voiceclone",
     "mimo-v2.5-tts-voicedesign"
   ],
-  "total_prompt_tokens": 1764,
-  "total_completion_tokens": 21,
-  "total_tokens": 1785,
-  "total_requests": 7,
-  "last_check": "2026-05-27T10:50:58Z"
+  "total_prompt_tokens": 2016,
+  "total_completion_tokens": 24,
+  "total_tokens": 2040,
+  "total_requests": 8,
+  "last_check": "2026-05-27T10:55:12Z"
 }
