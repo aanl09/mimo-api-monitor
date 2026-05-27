@@ -1,0 +1,112 @@
+name: Update Mimo API Status
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Every 5 minutes
+  workflow_dispatch:        # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Mimo API
+        env:
+          MIMO_KEY: ${{ secrets.MIMO_API_KEY }}
+        run: |
+          BASE="https://token-plan-sgp.xiaomimimo.com/v1"
+          AUTH="Authorization: Bearer $MIMO_KEY"
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # 1. Check models
+          MODELS_RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 10 --max-time 20 \
+            "${BASE}/models" -H "$AUTH" 2>&1)
+          HTTP_CODE=$(echo "$MODELS_RESP" | tail -1)
+          MODELS_BODY=$(echo "$MODELS_RESP" | sed '$d')
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            KEY_STATUS="ACTIVE"
+            MODEL_LIST=$(echo "$MODELS_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps([m['id'] for m in d.get('data',[])]))" 2>/dev/null || echo '[]')
+            MODEL_COUNT=$(echo "$MODEL_LIST" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+            KEY_STATUS="EXPIRED/INVALID"
+            MODEL_LIST="[]"
+            MODEL_COUNT=0
+          else
+            KEY_STATUS="ERROR (HTTP $HTTP_CODE)"
+            MODEL_LIST="[]"
+            MODEL_COUNT=0
+          fi
+          
+          # 2. Test completion
+          START_NS=$(date +%s%N)
+          TEST_RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 10 --max-time 30 \
+            -X POST "${BASE}/chat/completions" \
+            -H "$AUTH" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"mimo-v2.5-pro","messages":[{"role":"user","content":"ping"}],"max_tokens":3}' 2>&1)
+          END_NS=$(date +%s%N)
+          TEST_HTTP=$(echo "$TEST_RESP" | tail -1)
+          TEST_BODY=$(echo "$TEST_RESP" | sed '$d')
+          LATENCY_MS=$(( (END_NS - START_NS) / 1000000 ))
+          
+          COMPLETION_OK="false"
+          PROMPT_TOK=0
+          COMPL_TOK=0
+          TOTAL_TOK=0
+          
+          if [ "$TEST_HTTP" = "200" ]; then
+            COMPLETION_OK="true"
+            PROMPT_TOK=$(echo "$TEST_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('usage',{}).get('prompt_tokens',0))" 2>/dev/null || echo 0)
+            COMPL_TOK=$(echo "$TEST_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('usage',{}).get('completion_tokens',0))" 2>/dev/null || echo 0)
+            TOTAL_TOK=$(echo "$TEST_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('usage',{}).get('total_tokens',0))" 2>/dev/null || echo 0)
+          fi
+          
+          # 3. Load existing cumulative data
+          DATA_FILE="data.json"
+          if [ -f "$DATA_FILE" ]; then
+            OLD=$(cat "$DATA_FILE")
+            OLD_PROMPT=$(echo "$OLD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_prompt_tokens',0))" 2>/dev/null || echo 0)
+            OLD_COMPL=$(echo "$OLD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_completion_tokens',0))" 2>/dev/null || echo 0)
+            OLD_TOTAL=$(echo "$OLD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_tokens',0))" 2>/dev/null || echo 0)
+            OLD_REQS=$(echo "$OLD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_requests',0))" 2>/dev/null || echo 0)
+          else
+            OLD_PROMPT=0; OLD_COMPL=0; OLD_TOTAL=0; OLD_REQS=0
+          fi
+          
+          NEW_PROMPT=$((OLD_PROMPT + PROMPT_TOK))
+          NEW_COMPL=$((OLD_COMPL + COMPL_TOK))
+          NEW_TOTAL=$((OLD_TOTAL + TOTAL_TOK))
+          NEW_REQS=$((OLD_REQS + 1))
+          
+          # 4. Write data.json
+          python3 -c "
+          import json
+          d = {
+            'key_status': '$KEY_STATUS',
+            'completion_ok': $COMPLETION_OK,
+            'latency_ms': $LATENCY_MS,
+            'model_count': $MODEL_COUNT,
+            'models': $MODEL_LIST,
+            'total_prompt_tokens': $NEW_PROMPT,
+            'total_completion_tokens': $NEW_COMPL,
+            'total_tokens': $NEW_TOTAL,
+            'total_requests': $NEW_REQS,
+            'last_check': '$NOW'
+          }
+          with open('$DATA_FILE', 'w') as f:
+            json.dump(d, f, indent=2)
+          print(json.dumps(d, indent=2))
+          "
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          git diff --cached --quiet || git commit -m "update: $(date -u +%H:%M) status check"
+          git push

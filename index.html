@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mimo API Monitor</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .container{max-width:600px;width:100%}
+  h1{font-size:1.4rem;color:#a78bfa;margin-bottom:8px;letter-spacing:-0.5px}
+  .subtitle{font-size:0.75rem;color:#666;margin-bottom:28px}
+  .card{background:#12121a;border:1px solid #1e1e2e;border-radius:12px;padding:24px;margin-bottom:16px;transition:border-color .2s}
+  .card:hover{border-color:#2e2e4e}
+  .status-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #1a1a2a}
+  .status-row:last-child{border-bottom:none}
+  .label{color:#888;font-size:0.8rem}
+  .value{font-size:0.85rem;font-weight:600}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:0.7rem;font-weight:700;letter-spacing:0.5px}
+  .badge-active{background:#0a2e1a;color:#34d399;border:1px solid #166534}
+  .badge-error{background:#2e0a0a;color:#f87171;border:1px solid #7f1d1d}
+  .badge-unknown{background:#2e2a0a;color:#fbbf24;border:1px solid #854d0e}
+  .models{margin-top:16px}
+  .model-tag{display:inline-block;background:#1a1a2e;border:1px solid #2a2a4e;border-radius:6px;padding:4px 10px;margin:3px;font-size:0.7rem;color:#c4b5fd}
+  .tokens-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px}
+  .token-box{text-align:center;background:#0f0f1a;border:1px solid #1e1e2e;border-radius:8px;padding:14px 8px}
+  .token-num{font-size:1.3rem;font-weight:700;color:#a78bfa}
+  .token-label{font-size:0.65rem;color:#666;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px}
+  .latency{color:#34d399}
+  .latency-slow{color:#fbbf24}
+  .latency-fast{color:#34d399}
+  .footer{text-align:center;font-size:0.65rem;color:#444;margin-top:20px}
+  .pulse{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;animation:pulse 2s infinite}
+  .pulse-green{background:#34d399}
+  .pulse-red{background:#f87171}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+  .refresh-btn{background:#1a1a2e;border:1px solid #2a2a4e;color:#a78bfa;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:0.75rem;font-family:inherit;transition:all .2s}
+  .refresh-btn:hover{background:#2a2a4e;border-color:#a78bfa}
+  .ts{font-size:0.65rem;color:#555}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header-bar">
+    <div>
+      <h1>⚡ Mimo API Monitor</h1>
+      <div class="subtitle">token-plan-sgp.xiaomimimo.com</div>
+    </div>
+    <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+  </div>
+
+  <div class="card">
+    <div class="status-row">
+      <span class="label">API Key Status</span>
+      <span class="value" id="key-status">—</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Completion Test</span>
+      <span class="value" id="completion-test">—</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Latency</span>
+      <span class="value" id="latency">—</span>
+    </div>
+    <div class="status-row">
+      <span class="label">Models Available</span>
+      <span class="value" id="model-count">—</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:10px">Models</div>
+    <div class="models" id="models-list">Loading...</div>
+  </div>
+
+  <div class="card">
+    <div class="label" style="margin-bottom:12px">Cumulative Token Usage</div>
+    <div class="tokens-grid">
+      <div class="token-box">
+        <div class="token-num" id="prompt-tokens">—</div>
+        <div class="token-label">Prompt</div>
+      </div>
+      <div class="token-box">
+        <div class="token-num" id="completion-tokens">—</div>
+        <div class="token-label">Completion</div>
+      </div>
+      <div class="token-box">
+        <div class="token-num" id="total-tokens">—</div>
+        <div class="token-label">Total</div>
+      </div>
+    </div>
+    <div class="status-row" style="margin-top:12px">
+      <span class="label">Total Requests</span>
+      <span class="value" id="total-requests">—</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    Last updated: <span id="last-updated">—</span><br>
+    Auto-refreshes every 5 minutes via GitHub Actions
+  </div>
+</div>
+
+<script>
+async function loadData() {
+  try {
+    const resp = await fetch('data.json?t=' + Date.now());
+    if (!resp.ok) throw new Error('No data yet');
+    const d = await resp.json();
+
+    // Key status
+    const ks = document.getElementById('key-status');
+    if (d.key_status === 'ACTIVE') {
+      ks.innerHTML = '<span class="badge badge-active"><span class="pulse pulse-green"></span>ACTIVE</span>';
+    } else if (d.key_status.includes('ERROR') || d.key_status.includes('EXPIRED')) {
+      ks.innerHTML = '<span class="badge badge-error"><span class="pulse pulse-red"></span>' + d.key_status + '</span>';
+    } else {
+      ks.innerHTML = '<span class="badge badge-unknown">' + d.key_status + '</span>';
+    }
+
+    // Completion test
+    const ct = document.getElementById('completion-test');
+    if (d.completion_ok) {
+      ct.innerHTML = '<span class="badge badge-active">OK</span>';
+    } else {
+      ct.innerHTML = '<span class="badge badge-error">FAIL</span>';
+    }
+
+    // Latency
+    const lat = document.getElementById('latency');
+    const ms = d.latency_ms || 0;
+    const cls = ms < 3000 ? 'latency-fast' : ms < 8000 ? 'latency' : 'latency-slow';
+    lat.innerHTML = '<span class="' + cls + '">' + ms + 'ms</span>';
+
+    // Model count
+    document.getElementById('model-count').textContent = d.model_count || '—';
+
+    // Models
+    const ml = document.getElementById('models-list');
+    if (d.models && d.models.length) {
+      ml.innerHTML = d.models.map(m => '<span class="model-tag">' + m + '</span>').join('');
+    } else {
+      ml.textContent = 'No models found';
+    }
+
+    // Tokens
+    document.getElementById('prompt-tokens').textContent = fmt(d.total_prompt_tokens || 0);
+    document.getElementById('completion-tokens').textContent = fmt(d.total_completion_tokens || 0);
+    document.getElementById('total-tokens').textContent = fmt(d.total_tokens || 0);
+    document.getElementById('total-requests').textContent = fmt(d.total_requests || 0);
+
+    // Timestamp
+    document.getElementById('last-updated').textContent = d.last_check || '—';
+  } catch (e) {
+    document.getElementById('key-status').innerHTML = '<span class="badge badge-unknown">Waiting for first check...</span>';
+  }
+}
+
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toString();
+}
+
+loadData();
+setInterval(loadData, 300000); // 5 min
+</script>
+</body>
+</html>
